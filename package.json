@@ -36,7 +36,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p .",
-    "test": "bun test",
+    "test": "bun test ./test",
     "typecheck": "tsc -p . --noEmit",
     "sync-grammar": "bun scripts/sync-grammar.ts",
     "check-grammar": "bun scripts/sync-grammar.ts --check",
