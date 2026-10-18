@@ -81,11 +81,14 @@ export function tokenize(code: string): Array<TokenRange> {
   }
   let previousWord = ''
   let previousPunctuation = ''
+  // The dotted module path after `import` stays plain, keyword-spelled segments included.
+  let importPath = false
   let at = 0
 
   while (at < code.length) {
     const spaced = match(whitespace, code, at)
     if (spaced >= 0) {
+      if (code.slice(at, spaced).includes('\n')) importPath = false
       at = spaced
       continue
     }
@@ -147,6 +150,13 @@ export function tokenize(code: string): Array<TokenRange> {
     if (wordEnd >= 0) {
       const word = code.slice(at, wordEnd)
       let className: HighlightTokenClass | undefined
+      if (importPath && (previousWord === 'import' || previousPunctuation === '.')) {
+        previousWord = word
+        previousPunctuation = ''
+        at = wordEnd
+        continue
+      }
+      importPath = word === 'import'
       // A name after `fn` is the function's, even when it is spelled `drop` or `string`.
       if (previousWord === 'fn') className = 'function'
       else if (KEYWORDS.has(word)) className = 'keyword'
@@ -173,6 +183,7 @@ export function tokenize(code: string): Array<TokenRange> {
     }
 
     // Brackets and separators stay plain text.
+    if (code[at] !== '.') importPath = false
     previousPunctuation = code[at]!
     previousWord = ''
     at += 1

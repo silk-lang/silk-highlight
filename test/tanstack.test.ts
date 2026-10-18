@@ -112,4 +112,13 @@ describe('tokens', () => {
       ['make', 'function'],
     ])
   })
+
+  test('import paths stay plain, like the TextMate grammar', () => {
+    expect(classesOf('import silk.type as Types {Vector}')).toEqual([
+      ['import', 'keyword'],
+      ['as', 'keyword'],
+      ['Types', 'type'],
+      ['Vector', 'type'],
+    ])
+  })
 })
