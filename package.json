@@ -1,0 +1,64 @@
+{
+  "name": "silk-highlight",
+  "version": "0.1.0",
+  "description": "Silk syntax highlighting for Shiki and TanStack Highlight.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/silk-lang/silk-highlight.git"
+  },
+  "keywords": [
+    "silk",
+    "shiki",
+    "tanstack-highlight",
+    "syntax-highlighting"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./shiki": {
+      "types": "./dist/src/shiki.d.ts",
+      "import": "./dist/src/shiki.js"
+    },
+    "./tanstack": {
+      "types": "./dist/src/tanstack.d.ts",
+      "import": "./dist/src/tanstack.js"
+    },
+    "./silk.tmLanguage.json": "./grammar/silk.tmLanguage.json"
+  },
+  "files": [
+    "dist",
+    "grammar"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "bun test",
+    "typecheck": "tsc -p . --noEmit",
+    "sync-grammar": "bun scripts/sync-grammar.ts",
+    "check-grammar": "bun scripts/sync-grammar.ts --check",
+    "compare-silk": "bun scripts/compare-silk.ts"
+  },
+  "peerDependencies": {
+    "@tanstack/highlight": "^1.1.0",
+    "shiki": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/highlight": {
+      "optional": true
+    },
+    "shiki": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@tanstack/highlight": "^1.1.0",
+    "@types/bun": "^1.4.3",
+    "shiki": "^4.5.0",
+    "typescript": "^7.0.2"
+  },
+  "packageManager": "bun@1.4.2"
+}

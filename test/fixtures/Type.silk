@@ -1,0 +1,616 @@
+//! Type grammar: named and applied types, lifetimes, callable contracts, rows, and constraints.
+//!
+//! Rules borrow the parse state exclusively and append completed children before their parent.
+//! Type parsing stops before declaration bodies and list delimiters. Missing syntax becomes
+//! missing-token elements; enclosing list loops retain responsibility for forward progress.
+import lexer.Token {TokenKind}
+import parser.Node {NodeKind}
+import parser.Element {Element}
+import parser.NodeId {NodeId}
+import parser.ParseState {State}
+import parser.ParseState
+import parser.Grammar
+import parser.Property
+import parser.Expression
+import parser.Lookahead
+import silk.allocator {Allocator, OutOfMemoryError}
+import silk.usize
+import silk.vector {Vector}
+
+/// Parses a one- or two-segment nominal type path, without its generic arguments.
+pub effect fn path(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run pathElements(&mut state.*, &mut elements)
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.TypePath)
+}
+
+effect fn pathElements(state: &mut State, elements: &mut Vector<Element>) -> ()
+! OutOfMemoryError
+? &mut Allocator {
+  run ParseState.expect(&mut state.*, &mut elements.*, TokenKind.Identifier)
+  if ParseState.currentKind(&state.*) == TokenKind.Dot {
+    run ParseState.consume(&mut state.*, &mut elements.*)
+    run ParseState.expect(&mut state.*, &mut elements.*, TokenKind.Identifier)
+  }
+  return ()
+}
+
+effect fn lifetime(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Lifetime)
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.LifetimeType)
+}
+
+/// Parses a named type and its optional type arguments.
+pub effect fn named(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let result = run path(&mut state.*)
+  if ParseState.currentKind(&state.*) != TokenKind.Less {
+    return result
+  }
+  let mut elements = run ParseState.wrap(result)
+  run ParseState.attach(&mut elements, run arguments(&mut state.*, false))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.AppliedType)
+}
+
+fn nullablePointer(state: &State) -> bool {
+  return ParseState.currentKind(state) == TokenKind.Question && (ParseState.peek(state, 1) == TokenKind.Star || (ParseState.peek(
+    state,
+    1,
+  ) == TokenKind.LeftBracket && ParseState.peek(state, 2) == TokenKind.Star))
+}
+
+fn hasEffectEnvironment(state: &State) -> bool {
+  if ParseState.currentKind(state) == TokenKind.Semicolon {
+    return true
+  }
+  let mut offset: usize = 0
+  if ParseState.peek(state, offset) != TokenKind.Lifetime {
+    return false
+  }
+  offset = usize.add(offset, usize.ONE)
+  while ParseState.peek(state, offset) == TokenKind.Ampersand && ParseState.peek(
+    state,
+    usize.add(offset, usize.ONE),
+  ) == TokenKind.Lifetime {
+    offset = usize.add(offset, 2)
+  }
+  return ParseState.peek(state, offset) == TokenKind.Semicolon
+}
+
+/// Parses `<...>` arguments for a type or a call, retaining lifetime and row slots.
+///
+/// `call` selects call-owned arguments, including role selectors. Type-owned arguments additionally
+/// admit an environment before `;` and failure/requirement rows before the closing angle.
+pub effect fn arguments(state: &mut State, call: bool) -> NodeId
+! OutOfMemoryError
+? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Less)
+  if !call && hasEffectEnvironment(&state.*) {
+    let mut environment = Vector<Element>.make()
+    run ParseState.expect(&mut state.*, &mut environment, TokenKind.Lifetime)
+    while ParseState.currentKind(&state.*) == TokenKind.Ampersand {
+      run ParseState.consume(&mut state.*, &mut environment)
+      run ParseState.expect(&mut state.*, &mut environment, TokenKind.Lifetime)
+    }
+    run ParseState.expect(&mut state.*, &mut environment, TokenKind.Semicolon)
+    run ParseState.attach(
+      &mut elements,
+      run ParseState.complete(&mut state.*, move environment, NodeKind.EffectEnvironment),
+    )
+  }
+  if ParseState.currentKind(&state.*) == TokenKind.Greater {
+    run ParseState.missing(&mut state.*, &mut elements, TokenKind.Identifier)
+  }
+  while ParseState.currentKind(&state.*) != TokenKind.Greater && ParseState.currentKind(&state.*) != TokenKind.EndOfFile {
+    let kind = ParseState.currentKind(&state.*)
+    if kind == TokenKind.Bang || (kind == TokenKind.Question && !nullablePointer(&state.*)) {
+      break
+    }
+    if kind != TokenKind.Lifetime && !Grammar.typeStart(kind) {
+      break
+    }
+    let before = state.index
+    let mut argument = Vector<Element>.make()
+    if kind == TokenKind.Lifetime {
+      run ParseState.attach(&mut argument, run lifetime(&mut state.*))
+    } else {
+      run ParseState.attach(&mut argument, run parse(&mut state.*))
+    }
+    if call && ParseState.word(&state.*, "at") {
+      run ParseState.consume(&mut state.*, &mut argument)
+      run ParseState.attach(&mut argument, run path(&mut state.*))
+      run ParseState.attach(
+        &mut elements,
+        run ParseState.complete(&mut state.*, move argument, NodeKind.RequirementSelector),
+      )
+    } else {
+      // A normal argument is already complete: splice the one child without an extra wrapper.
+      run ParseState.extend(&mut elements, move argument)
+    }
+    if state.index == before {
+      break
+    }
+    if ParseState.currentKind(&state.*) != TokenKind.Comma {
+      break
+    }
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  if !call && ParseState.currentKind(&state.*) == TokenKind.Bang {
+    run ParseState.attach(&mut elements, run failureRow(&mut state.*))
+  }
+  if !call && ParseState.currentKind(&state.*) == TokenKind.Question {
+    run ParseState.attach(&mut elements, run requirementRow(&mut state.*))
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Greater)
+  if call {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.CallTypeArgumentList)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.TypeArgumentList)
+}
+
+// `use` is contextual only in a callable's outer `for` list, never in a declaration generic list.
+effect fn typeParameter(state: &mut State, binders: bool) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let invocationUse = binders && ParseState.word(&state.*, "use")
+  let isLifetime = invocationUse || ParseState.currentKind(&state.*) == TokenKind.Lifetime
+  let isRow = !invocationUse && ParseState.currentKind(&state.*) == TokenKind.Question
+  let mut elements = Vector<Element>.make()
+  if invocationUse {
+    run ParseState.consume(&mut state.*, &mut elements)
+  } else {
+    run ParseState.optional(&mut state.*, &mut elements, TokenKind.Question)
+  }
+  if isLifetime {
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.Lifetime)
+  } else {
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.Identifier)
+  }
+  if !isRow && ParseState.currentKind(&state.*) == TokenKind.Colon {
+    run ParseState.consume(&mut state.*, &mut elements)
+    while true {
+      if ParseState.currentKind(&state.*) == TokenKind.Lifetime {
+        run ParseState.attach(&mut elements, run lifetime(&mut state.*))
+      } else {
+        run ParseState.attach(&mut elements, run parse(&mut state.*))
+      }
+      if ParseState.currentKind(&state.*) != TokenKind.Plus {
+        break
+      }
+      run ParseState.consume(&mut state.*, &mut elements)
+    }
+  }
+  if isLifetime {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.LifetimeParameter)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.TypeParameter)
+}
+
+/// Parses declaration binders or a higher-ranked callable lifetime binder list.
+pub effect fn parameters(state: &mut State, binders: bool) -> NodeId
+! OutOfMemoryError
+? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Less)
+  if ParseState.currentKind(&state.*) == TokenKind.Greater {
+    run ParseState.missing(&mut state.*, &mut elements, TokenKind.Identifier)
+  }
+  while ParseState.currentKind(&state.*) == TokenKind.Identifier || ParseState.currentKind(&state.*) == TokenKind.Lifetime || ParseState.currentKind(
+    &state.*,
+  ) == TokenKind.Question {
+    run ParseState.attach(&mut elements, run typeParameter(&mut state.*, binders))
+    if ParseState.currentKind(&state.*) != TokenKind.Comma {
+      break
+    }
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Greater)
+  if binders {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.LifetimeBinderList)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.TypeParameterList)
+}
+
+/// Parses the explicit lifetime environment after `fn` or `effect`.
+pub effect fn environment(state: &mut State, effectEnvironment: bool) -> NodeId
+! OutOfMemoryError
+? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Less)
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Lifetime)
+  while effectEnvironment && ParseState.currentKind(&state.*) == TokenKind.Ampersand {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.Lifetime)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Greater)
+  if effectEnvironment {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.EffectEnvironment)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.CallableEnvironment)
+}
+
+effect fn callable(state: &mut State, initial: Vector<Element>) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = move initial
+  let foreign = ParseState.currentKind(&state.*) == TokenKind.ExternKeyword
+  if foreign {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.TextLiteral)
+  }
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.UnsafeKeyword)
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.MutKeyword)
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.OnceKeyword)
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.FnKeyword)
+  if ParseState.currentKind(&state.*) == TokenKind.Less {
+    run ParseState.attach(&mut elements, run environment(&mut state.*, false))
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.LeftParenthesis)
+  while Grammar.typeStart(ParseState.currentKind(&state.*)) {
+    let before = state.index
+    run ParseState.attach(&mut elements, run parse(&mut state.*))
+    if state.index == before || ParseState.currentKind(&state.*) != TokenKind.Comma {
+      break
+    }
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightParenthesis)
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Arrow)
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  if foreign {
+    run Property.list(&mut state.*, &mut elements)
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.ForeignFunctionType)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.CallableType)
+}
+
+effect fn pointer(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.Question)
+  let many = ParseState.currentKind(&state.*) == TokenKind.LeftBracket
+  if many {
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Star)
+  if many {
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightBracket)
+  }
+  if ParseState.currentKind(&state.*) == TokenKind.MutKeyword {
+    run ParseState.consume(&mut state.*, &mut elements)
+  } else {
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.ConstKeyword)
+  }
+  while (ParseState.word(&state.*, "align") || ParseState.word(&state.*, "addrspace")) && ParseState.peek(
+    &state.*,
+    1,
+  ) == TokenKind.LeftParenthesis {
+    let mut qualifier = Vector<Element>.make()
+    run ParseState.consume(&mut state.*, &mut qualifier)
+    run ParseState.expect(&mut state.*, &mut qualifier, TokenKind.LeftParenthesis)
+    run ParseState.expect(&mut state.*, &mut qualifier, TokenKind.DecimalInteger)
+    run ParseState.expect(&mut state.*, &mut qualifier, TokenKind.RightParenthesis)
+    run ParseState.attach(
+      &mut elements,
+      run ParseState.complete(&mut state.*, move qualifier, NodeKind.PointerQualifier),
+    )
+  }
+  run ParseState.attach(&mut elements, run primary(&mut state.*))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.PointerType)
+}
+
+effect fn reference(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.consume(&mut state.*, &mut elements)
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.Lifetime)
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.MutKeyword)
+  // `&[T; N]` references a fixed array; `&[T]` is a slice.
+  if ParseState.currentKind(&state.*) == TokenKind.LeftBracket && !Lookahead.fixedArray(&state.*) {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run parse(&mut state.*))
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightBracket)
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.SliceType)
+  }
+  run ParseState.attach(&mut elements, run primary(&mut state.*))
+  if ParseState.currentKind(&state.*) == TokenKind.At {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.Identifier)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ReferenceType)
+}
+
+effect fn bracketed(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.consume(&mut state.*, &mut elements)
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Semicolon)
+  run ParseState.attach(&mut elements, run Expression.parse(&mut state.*, false))
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightBracket)
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.FixedArrayType)
+}
+
+effect fn parenthesized(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.consume(&mut state.*, &mut elements)
+  let unit = ParseState.currentKind(&state.*) == TokenKind.RightParenthesis
+  if !unit {
+    run ParseState.attach(&mut elements, run parse(&mut state.*))
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightParenthesis)
+  if unit {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.UnitType)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ParenthesizedType)
+}
+
+effect fn rowOperandMember(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  if ParseState.currentKind(&state.*) == TokenKind.Ampersand {
+    return run requirement(&mut state.*)
+  }
+  let result = run primary(&mut state.*)
+  if !ParseState.word(&state.*, "at") {
+    return result
+  }
+  let mut elements = run ParseState.wrap(result)
+  run ParseState.consume(&mut state.*, &mut elements)
+  run ParseState.attach(&mut elements, run path(&mut state.*))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.Requirement)
+}
+
+effect fn rowOperand(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let first = run rowOperandMember(&mut state.*)
+  if ParseState.currentKind(&state.*) != TokenKind.Pipe {
+    return first
+  }
+  let mut elements = run ParseState.wrap(first)
+  while ParseState.currentKind(&state.*) == TokenKind.Pipe {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run rowOperandMember(&mut state.*))
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.UnionType)
+}
+
+effect fn without(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.consume(&mut state.*, &mut elements)
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Less)
+  run ParseState.attach(&mut elements, run rowOperand(&mut state.*))
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Comma)
+  run ParseState.attach(&mut elements, run rowOperand(&mut state.*))
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Greater)
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.RowWithout)
+}
+
+// An applied type owns its mode token; a bare path owns that token directly. Delay completing
+// the path until the following token selects the shape, so neither case leaves an orphan node.
+effect fn modeQualified(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.consume(&mut state.*, &mut elements)
+  let mut subject = Vector<Element>.make()
+  run pathElements(&mut state.*, &mut subject)
+  if ParseState.currentKind(&state.*) != TokenKind.Less {
+    run ParseState.extend(&mut elements, move subject)
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.TypePath)
+  }
+  run ParseState.attach(
+    &mut elements,
+    run ParseState.complete(&mut state.*, move subject, NodeKind.TypePath),
+  )
+  run ParseState.attach(&mut elements, run arguments(&mut state.*, false))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.AppliedType)
+}
+
+/// Parses a type without a following union separator.
+///
+/// References and pointers bind to one primary. Parentheses explicitly admit a union subject.
+pub effect fn primary(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  if !ParseState.affordable(&state.*, ParseState.TYPE_COST) {
+    return run ParseState.nestingError(&mut state.*)
+  }
+  let cost = state.stackCost
+  state.stackCost = usize.add(cost, ParseState.TYPE_COST)
+  let node = run primaryInner(&mut state.*)
+  state.stackCost = cost
+  return node
+}
+
+effect fn primaryInner(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let kind = ParseState.currentKind(&state.*)
+  if kind == TokenKind.ForKeyword {
+    let mut elements = Vector<Element>.make()
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run parameters(&mut state.*, true))
+    return run callable(&mut state.*, move elements)
+  }
+  if ParseState.word(&state.*, "Without") && ParseState.peek(&state.*, 1) == TokenKind.Less {
+    return run without(&mut state.*)
+  }
+  if ParseState.word(&state.*, "typeof") && ParseState.peek(&state.*, 1) == TokenKind.LeftParenthesis {
+    let mut elements = Vector<Element>.make()
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run named(&mut state.*))
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightParenthesis)
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.ExactRepresentationType)
+  }
+  if (kind == TokenKind.MutKeyword || kind == TokenKind.OnceKeyword) && ParseState.peek(&state.*, 1) == TokenKind.Identifier {
+    return run modeQualified(&mut state.*)
+  }
+  if kind == TokenKind.ExternKeyword || kind == TokenKind.UnsafeKeyword || kind == TokenKind.FnKeyword || kind == TokenKind.MutKeyword || kind == TokenKind.OnceKeyword {
+    return run callable(&mut state.*, Vector<Element>.make())
+  }
+  if kind == TokenKind.Star || nullablePointer(&state.*) || (kind == TokenKind.LeftBracket && ParseState.peek(
+    &state.*,
+    1,
+  ) == TokenKind.Star) {
+    return run pointer(&mut state.*)
+  }
+  if kind == TokenKind.Ampersand {
+    return run reference(&mut state.*)
+  }
+  if kind == TokenKind.LeftBracket {
+    return run bracketed(&mut state.*)
+  }
+  if kind == TokenKind.LeftParenthesis {
+    return run parenthesized(&mut state.*)
+  }
+  return run named(&mut state.*)
+}
+
+/// Parses a union of primary types, returning the sole member directly when there is no `|`.
+pub effect fn parse(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let first = run primary(&mut state.*)
+  if ParseState.currentKind(&state.*) != TokenKind.Pipe {
+    return first
+  }
+  let mut elements = run ParseState.wrap(first)
+  while ParseState.currentKind(&state.*) == TokenKind.Pipe {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run primary(&mut state.*))
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.UnionType)
+}
+
+/// Parses an arrow and result type, including a contextual opaque result binder.
+pub effect fn result(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Arrow)
+  if ParseState.word(&state.*, "some") && ParseState.peek(&state.*, 1) == TokenKind.Less {
+    let mut opaque = Vector<Element>.make()
+    run ParseState.consume(&mut state.*, &mut opaque)
+    run ParseState.attach(&mut opaque, run parameters(&mut state.*, false))
+    run ParseState.attach(&mut opaque, run parse(&mut state.*))
+    run ParseState.attach(
+      &mut elements,
+      run ParseState.complete(&mut state.*, move opaque, NodeKind.OpaqueResultType),
+    )
+  } else {
+    run ParseState.attach(&mut elements, run parse(&mut state.*))
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ReturnType)
+}
+
+/// Parses `!` followed by the failure union; semantic row validation happens later.
+pub effect fn failureRow(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Bang)
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.FailureRow)
+}
+
+effect fn requirement(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Ampersand)
+  run ParseState.optional(&mut state.*, &mut elements, TokenKind.MutKeyword)
+  run ParseState.attach(&mut elements, run primary(&mut state.*))
+  if ParseState.word(&state.*, "at") {
+    run ParseState.consume(&mut state.*, &mut elements)
+    run ParseState.attach(&mut elements, run path(&mut state.*))
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.Requirement)
+}
+
+/// Parses a requirement row containing borrowed services, row names, or `Without` expressions.
+pub effect fn requirementRow(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Question)
+  while true {
+    if ParseState.currentKind(&state.*) == TokenKind.Ampersand {
+      run ParseState.attach(&mut elements, run requirement(&mut state.*))
+    } else if ParseState.word(&state.*, "Without") && ParseState.peek(&state.*, 1) == TokenKind.Less {
+      run ParseState.attach(&mut elements, run parse(&mut state.*))
+    } else {
+      run ParseState.attach(&mut elements, run primary(&mut state.*))
+    }
+    if ParseState.currentKind(&state.*) != TokenKind.Pipe {
+      break
+    }
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.RequirementRow)
+}
+
+effect fn constraint(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = run ParseState.wrap(run parse(&mut state.*))
+  let membership = ParseState.word(&state.*, "in")
+  if membership {
+    run ParseState.contextual(&mut state.*, &mut elements, "in")
+  } else {
+    run ParseState.contextual(&mut state.*, &mut elements, "provides")
+  }
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  if membership {
+    return run ParseState.complete(&mut state.*, move elements, NodeKind.MembershipConstraint)
+  }
+  run ParseState.contextual(&mut state.*, &mut elements, "from")
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ProviderConstraint)
+}
+
+/// Parses a contextual `where` clause with comma-separated membership/provider constraints.
+pub effect fn whereClause(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Identifier)
+  while true {
+    run ParseState.attach(&mut elements, run constraint(&mut state.*))
+    if ParseState.currentKind(&state.*) != TokenKind.Comma {
+      break
+    }
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.WhereClause)
+}
+
+effect fn parameter(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  if ParseState.currentKind(&state.*) == TokenKind.StaticKeyword || ParseState.currentKind(&state.*) == TokenKind.MutKeyword {
+    run ParseState.consume(&mut state.*, &mut elements)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Identifier)
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.Colon)
+  run ParseState.attach(&mut elements, run parse(&mut state.*))
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ParameterDeclaration)
+}
+
+/// Parses named callable parameters and the optional trailing C-variadic marker.
+pub effect fn parameterList(state: &mut State) -> NodeId ! OutOfMemoryError ? &mut Allocator {
+  let mut elements = Vector<Element>.make()
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.LeftParenthesis)
+  while ParseState.currentKind(&state.*) == TokenKind.Identifier || ParseState.currentKind(&state.*) == TokenKind.StaticKeyword || ParseState.currentKind(
+    &state.*,
+  ) == TokenKind.MutKeyword || ParseState.currentKind(&state.*) == TokenKind.Ellipsis {
+    if ParseState.currentKind(&state.*) == TokenKind.Ellipsis {
+      run ParseState.consume(&mut state.*, &mut elements)
+      break
+    }
+    if ParseState.currentKind(&state.*) == TokenKind.StaticKeyword && ParseState.peek(&state.*, 1) == TokenKind.FnKeyword {
+      break
+    }
+    run ParseState.attach(&mut elements, run parameter(&mut state.*))
+    if ParseState.currentKind(&state.*) == TokenKind.RightParenthesis {
+      break
+    }
+    run ParseState.expect(&mut state.*, &mut elements, TokenKind.Comma)
+  }
+  run ParseState.expect(&mut state.*, &mut elements, TokenKind.RightParenthesis)
+  return run ParseState.complete(&mut state.*, move elements, NodeKind.ParameterList)
+}
+
+/// Appends the shared generic/parameter/result/row/constraint suffix of a callable declaration.
+pub effect fn contract(state: &mut State, elements: &mut Vector<Element>) -> ()
+! OutOfMemoryError
+? &mut Allocator {
+  if ParseState.currentKind(&state.*) == TokenKind.Less {
+    run ParseState.attach(&mut elements.*, run parameters(&mut state.*, false))
+  }
+  run ParseState.attach(&mut elements.*, run parameterList(&mut state.*))
+  if ParseState.currentKind(&state.*) == TokenKind.Arrow {
+    run ParseState.attach(&mut elements.*, run result(&mut state.*))
+  }
+  if ParseState.currentKind(&state.*) == TokenKind.Bang {
+    run ParseState.attach(&mut elements.*, run failureRow(&mut state.*))
+  }
+  if ParseState.currentKind(&state.*) == TokenKind.Question {
+    run ParseState.attach(&mut elements.*, run requirementRow(&mut state.*))
+  }
+  if ParseState.word(&state.*, "where") {
+    run ParseState.attach(&mut elements.*, run whereClause(&mut state.*))
+  }
+  return ()
+}

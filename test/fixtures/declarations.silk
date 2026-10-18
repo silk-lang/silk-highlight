@@ -1,0 +1,60 @@
+// SYNTAX TEST "source.silk" "declarations and keywords"
+
+//! Module documentation.
+// <--- comment.line.documentation.module.silk
+/// Item documentation.
+// <--- comment.line.documentation.silk
+//// Four slashes are an ordinary comment.
+// <---- comment.line.double-slash.silk
+
+import silk.ownership { Copy }
+// <------ keyword.other.import.silk
+//                      ^^^^ entity.name.type.silk
+
+pub struct Span {
+// <--- storage.modifier.silk
+//  ^^^^^^ storage.type.struct.silk
+//         ^^^^ entity.name.type.silk
+  pub start: usize
+//           ^^^^^ support.type.primitive.silk
+}
+
+pub union Token {
+//  ^^^^^ storage.type.union.silk
+//        ^^^^^ entity.name.type.silk
+  Identifier {pub span: Span},
+}
+
+impl Copy for Span {}
+// <---- storage.type.silk
+//        ^^^ keyword.control.silk
+
+pub effect fn parse<'a>(source: string<'a>, mut count: &mut i32) -> Self ! OutOfMemoryError {
+//  ^^^^^^ storage.modifier.silk
+//         ^^ storage.type.function.silk
+//            ^^^^^ entity.name.function.silk
+//                  ^^ storage.modifier.lifetime.silk
+//                   ^ entity.name.type.lifetime.silk
+//                                                               ^^ keyword.operator.arrow.silk
+//                                                                  ^^^^ storage.type.self.silk
+//                                                                       ^ keyword.operator.silk
+  let mut index = self.start
+//^^^ storage.type.silk
+//    ^^^ storage.modifier.silk
+//                ^^^^ variable.language.self.silk
+  while index < 8 {
+//^^^^^ keyword.control.silk
+    if index == 0 && done() { break } else { continue }
+//           ^^ keyword.operator.comparison.silk
+//                ^^ keyword.operator.logical.silk
+//                   ^^^^ entity.name.function.call.silk
+//                            ^^^^^ keyword.control.silk
+  }
+  let value = source |> byteAt(0)
+//                   ^^ keyword.operator.pipeline.silk
+  fail OutOfMemoryError {}
+//^^^^ keyword.control.silk
+  return true
+//^^^^^^ keyword.control.silk
+//       ^^^^ constant.language.boolean.silk
+}

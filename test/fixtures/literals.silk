@@ -1,0 +1,47 @@
+// SYNTAX TEST "source.silk" "literals"
+
+let text = "line\n\u{1F600}\x41"
+//         ^ punctuation.definition.string.begin.silk
+//          ^^^^ string.quoted.double.silk
+//              ^^ constant.character.escape.silk
+//                ^^^^^^^^^ constant.character.escape.silk
+//                         ^^^^ constant.character.escape.silk
+let raw = r"C:\path"
+//        ^ storage.type.string.silk
+//          ^^^^^^^ string.quoted.double.raw.silk
+let bytes = b"ab\0"
+//          ^ storage.type.string.silk
+//              ^^ constant.character.escape.silk
+let block = """first
+//          ^^^ punctuation.definition.string.begin.silk
+second"""
+// <--------- string.quoted.triple.silk
+let unclosed = "stops at the line end
+let after = 1
+// <--- storage.type.silk
+let c = 'a'
+//      ^^^ constant.character.silk
+let escaped = '\''
+//            ^^^^ constant.character.silk
+let view: &'static [u8] = bytes
+//         ^^^^^^^ storage.modifier.lifetime.silk
+let n = 1_000
+//      ^^^^^ constant.numeric.integer.silk
+let f = 2.5e-3
+//      ^^^^^^ constant.numeric.float.silk
+let e = 1e9
+//      ^^^ constant.numeric.float.silk
+let h = 0xFF_FF
+//      ^^^^^^^ constant.numeric.hex.silk
+let o = 0o755
+//      ^^^^^ constant.numeric.octal.silk
+let b = 0b1010
+//      ^^^^^^ constant.numeric.binary.silk
+let d = 1h30m
+//      ^^^^^ constant.numeric.duration.silk
+let ms = 250ms
+//       ^^^^^ constant.numeric.duration.silk
+let r = 0..10
+//      ^ constant.numeric.integer.silk
+//       ^^ keyword.operator.range.silk
+//         ^^ constant.numeric.integer.silk
