@@ -1,6 +1,6 @@
 {
   "name": "silk-lang",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript utilities for the Silk language, starting with highlighting for Shiki and TanStack Highlight.",
   "license": "MIT",
   "type": "module",
