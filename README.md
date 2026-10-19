@@ -54,3 +54,13 @@ bun run build               # dist/
 
 When the grammar changes in silk-vscode, run `bun run sync-grammar` here and update
 `src/tanstack.ts` until `compare-silk` reports no differences.
+
+## Release
+
+Releases use [Changesets](https://github.com/changesets/changesets). With a change that should
+reach npm, run `bun changeset`, pick the bump and describe it for the changelog, and commit the
+generated file in `.changeset/`.
+
+On `main`, the Release workflow keeps a "Version packages" pull request open that applies the
+pending changesets to `package.json` and `CHANGELOG.md`. Merging it publishes to npm through
+trusted publishing, so no npm token is needed.
