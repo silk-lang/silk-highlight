@@ -6,7 +6,7 @@
  *
  * ```ts
  * import { createHighlighter } from 'shiki'
- * import silk from 'silk-highlight/shiki'
+ * import silk from 'silk-lang/shiki'
  *
  * const highlighter = await createHighlighter({ langs: [silk], themes: ['github-dark'] })
  * highlighter.codeToHtml(source, { lang: 'silk', theme: 'github-dark' })

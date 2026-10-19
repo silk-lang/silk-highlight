@@ -9,7 +9,7 @@
  *
  * ```ts
  * import { createHighlighter } from '@tanstack/highlight/core'
- * import { silk } from 'silk-highlight/tanstack'
+ * import { silk } from 'silk-lang/tanstack'
  *
  * const highlighter = createHighlighter({ languages: [silk] })
  * ```
