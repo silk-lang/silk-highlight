@@ -1,7 +1,12 @@
-# silk-highlight
+# silk-lang
 
-[Silk](https://github.com/silk-lang/silk) syntax highlighting for web highlighters:
-[Shiki](https://shiki.style) and [TanStack Highlight](https://tanstack.com/highlight).
+TypeScript utilities for [Silk](https://github.com/silk-lang/silk), published on npm as
+`silk-lang`. Each tool is a subpath export. So far that is syntax highlighting for web
+highlighters: [Shiki](https://shiki.style) and [TanStack Highlight](https://tanstack.com/highlight).
+
+```sh
+bun add silk-lang
+```
 
 ## Shiki
 
@@ -11,13 +16,13 @@ it; `grammar/silk.tmLanguage.json` is a copy that CI checks against silk-vscode'
 
 ```ts
 import { createHighlighter } from 'shiki'
-import silk from 'silk-highlight/shiki'
+import silk from 'silk-lang/shiki'
 
 const highlighter = await createHighlighter({ langs: [silk], themes: ['github-dark'] })
 const html = highlighter.codeToHtml(source, { lang: 'silk', theme: 'github-dark' })
 ```
 
-The raw grammar is also exported as `silk-highlight/silk.tmLanguage.json` for other TextMate
+The raw grammar is also exported as `silk-lang/silk.tmLanguage.json` for other TextMate
 consumers.
 
 ## TanStack Highlight
@@ -27,7 +32,7 @@ returns source ranges, so this package includes a hand-written one that follows 
 
 ```ts
 import { createHighlighter } from '@tanstack/highlight/core'
-import silk from 'silk-highlight/tanstack'
+import silk from 'silk-lang/tanstack'
 
 const highlighter = createHighlighter({ languages: [silk] })
 const html = highlighter.highlightToHtml(source, { lang: 'silk' })

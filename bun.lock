@@ -9,6 +9,14 @@
         "shiki": "^4.5.0",
         "typescript": "^7.0.2",
       },
+      "peerDependencies": {
+        "@tanstack/highlight": "^1.1.0",
+        "shiki": ">=1.0.0",
+      },
+      "optionalPeers": [
+        "@tanstack/highlight",
+        "shiki",
+      ],
     },
   },
   "packages": {
