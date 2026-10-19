@@ -6,7 +6,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/silk-lang/silk-highlight.git"
+    "url": "https://github.com/silk-lang/silk-js.git"
   },
   "keywords": [
     "silk",
