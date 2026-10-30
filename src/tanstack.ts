@@ -40,7 +40,7 @@ const character = /'(?:\\(?:u\{[0-9A-Fa-f]*\}|x[0-9A-Fa-f]{2}|[^\n])|[^'\\\n])'/
 const lifetime = /'[A-Za-z_][A-Za-z0-9_]*/y
 // A numeric token immediately followed by letters is one token (a duration or an invalid one).
 const number = /(?:0[xXoObB][0-9A-Fa-f_]*|[0-9][0-9_]*(?:\.[0-9][0-9_]*)?(?:[eE][+-]?[0-9][0-9_]*)?)[A-Za-z0-9_]*/y
-const operator = /\|>|->|=>|==|!=|<=|>=|&&|\|\||\.\.\.?|[-+*/%=<>!?&|^~@]/y
+const operator = /\|>|->|=>|==|!=|<=|>=|&&|\|\||\.\.\.?|[-+*/%=<>!?&|^~]/y
 const callFollows = /\s*\(/y
 
 function isIdentifierCharacter(code: string, index: number): boolean {
@@ -141,6 +141,20 @@ export function tokenize(code: string): Array<TokenRange> {
       const end = match(number, code, at)
       push(at, end, 'number')
       at = end
+      previousWord = ''
+      previousPunctuation = ''
+      continue
+    }
+
+    // A directive's `@` stays plain and its name reads as a function; a role marker's `#` is an
+    // operator and its role a type.
+    if (code[at] === '@' || code[at] === '#') {
+      const nameEnd = match(identifier, code, at + 1)
+      if (nameEnd >= 0) {
+        if (code[at] === '#') push(at, at + 1, 'operator')
+        push(at + 1, nameEnd, code[at] === '@' ? 'function' : 'type')
+      }
+      at = nameEnd >= 0 ? nameEnd : at + 1
       previousWord = ''
       previousPunctuation = ''
       continue

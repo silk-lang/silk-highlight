@@ -54,6 +54,20 @@ describe('tokens', () => {
     ])
   })
 
+  test('directives and role markers', () => {
+    expect(classesOf('@foreign(memory: "read")\nfn read(port: &Port #reader) -> ()')).toEqual([
+      ['foreign', 'function'],
+      ['"read"', 'string'],
+      ['fn', 'keyword'],
+      ['read', 'function'],
+      ['&', 'operator'],
+      ['Port', 'type'],
+      ['#', 'operator'],
+      ['reader', 'type'],
+      ['->', 'operator'],
+    ])
+  })
+
   test('numbers, durations and comments', () => {
     expect(classesOf('let d = 1h30m + 0xff + 1.5e3 // done')).toEqual([
       ['let', 'keyword'],

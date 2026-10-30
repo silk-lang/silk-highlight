@@ -10,6 +10,7 @@
     { "include": "#lifetimes" },
     { "include": "#numbers" },
     { "include": "#imports" },
+    { "include": "#directives" },
     { "include": "#declarations" },
     { "include": "#keywords" },
     { "include": "#types" },
@@ -148,6 +149,25 @@
         }
       }
     },
+    "directives": {
+      "comment": "`@name` or `@name(...)` before a declaration or a foreign function type, and the `#Role` marker on a reference type.",
+      "patterns": [
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.annotation.silk" },
+            "2": { "name": "entity.name.function.decorator.silk" }
+          }
+        },
+        {
+          "match": "(#)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.operator.role.silk" },
+            "2": { "name": "entity.name.type.role.silk" }
+          }
+        }
+      ]
+    },
     "declarations": {
       "patterns": [
         {
@@ -211,7 +231,7 @@
         { "name": "keyword.operator.assignment.silk", "match": "=" },
         { "name": "keyword.operator.comparison.silk", "match": "<|>" },
         { "name": "keyword.operator.arithmetic.silk", "match": "[-+*/%]" },
-        { "name": "keyword.operator.silk", "match": "[!?&|^~@]" }
+        { "name": "keyword.operator.silk", "match": "[!?&|^~]" }
       ]
     },
     "punctuation": {
